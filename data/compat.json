@@ -1,0 +1,565 @@
+{
+ "generated": "2026-10-14",
+ "environment": {
+  "wordpress": "7.1.3",
+  "php": "8.3 (php-wasm 3.1.57)",
+  "database": "MySQL 8.0 through Cloudflare Hyperdrive",
+  "testedBetween": "2026-10-12 and 2026-10-14"
+ },
+ "method": "Each plugin was deployed on its own, activated from the admin, then the front page, the dashboard and the admin pages the plugin adds were opened. Five plugins also had their main business flow tested. A plugin counts as working when every one of these pages loads without a PHP fatal error or a platform limit.",
+ "source": "Plugins: the top 30 by active installs from the WordPress.org plugins API on 2026-10-12.",
+ "plugins": [
+  {
+   "slug": "elementor",
+   "name": "Elementor Website Builder",
+   "version": "4.3.4",
+   "activeInstalls": 10000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": {
+    "result": "5/5",
+    "what": "Page created, Elementor editor loads, front-end render of an Elementor page"
+   },
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/elementor/"
+  },
+  {
+   "slug": "wordpress-seo",
+   "name": "Yoast SEO",
+   "version": "28.6",
+   "activeInstalls": 10000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": {
+    "result": "3/3",
+    "what": "Sitemap index, post sitemap, SEO meta tags in page head"
+   },
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/wordpress-seo/"
+  },
+  {
+   "slug": "contact-form-7",
+   "name": "Contact Form 7",
+   "version": "6.2.2",
+   "activeInstalls": 10000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": {
+    "result": "6/7",
+    "what": "Form list, form page, submission accepted; sending the email fails because PHP mail() is not available"
+   },
+   "note": "Email notifications fail unless an API-based mail plugin is configured (not tested).",
+   "wpOrgUrl": "https://wordpress.org/plugins/contact-form-7/"
+  },
+  {
+   "slug": "classic-editor",
+   "name": "Classic Editor",
+   "version": "1.7.0",
+   "activeInstalls": 8000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 0
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/classic-editor/"
+  },
+  {
+   "slug": "litespeed-cache",
+   "name": "LiteSpeed Cache",
+   "version": "7.9.1",
+   "activeInstalls": 7000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": "Admin pages load. Its page cache works only with a LiteSpeed web server, so it has no effect on Workers.",
+   "wpOrgUrl": "https://wordpress.org/plugins/litespeed-cache/"
+  },
+  {
+   "slug": "woocommerce",
+   "name": "WooCommerce",
+   "version": "11.2.1",
+   "activeInstalls": 7000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": {
+    "result": "14/14",
+    "what": "Store checkout end to end (cash on delivery): product created over REST, cart, checkout, order stored as processing, stock reduced, admin order list and status pages"
+   },
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/woocommerce/"
+  },
+  {
+   "slug": "google-site-kit",
+   "name": "Site Kit by Google",
+   "version": "1.189.0",
+   "activeInstalls": 5000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/google-site-kit/"
+  },
+  {
+   "slug": "akismet",
+   "name": "Akismet Anti-spam",
+   "version": "5.7.2",
+   "activeInstalls": 5000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": "API key verification not tested.",
+   "wpOrgUrl": "https://wordpress.org/plugins/akismet/"
+  },
+  {
+   "slug": "wpforms-lite",
+   "name": "WPForms",
+   "version": "2.0.2.2",
+   "activeInstalls": 5000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/wpforms-lite/"
+  },
+  {
+   "slug": "all-in-one-wp-migration",
+   "name": "All-in-One WP Migration and Backup",
+   "version": "7.112",
+   "activeInstalls": 5000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": "Admin pages load. Export and import write to local disk, which does not persist on Workers.",
+   "wpOrgUrl": "https://wordpress.org/plugins/all-in-one-wp-migration/"
+  },
+  {
+   "slug": "wordfence",
+   "name": "Wordfence Security",
+   "version": "9.0.2",
+   "activeInstalls": 5000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": "Admin pages load. Firewall and malware scan were not exercised.",
+   "wpOrgUrl": "https://wordpress.org/plugins/wordfence/"
+  },
+  {
+   "slug": "wp-mail-smtp",
+   "name": "WP Mail SMTP by WPForms",
+   "version": "4.10.2",
+   "activeInstalls": 4000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": "Admin pages load. Actually sending mail through a provider was not tested.",
+   "wpOrgUrl": "https://wordpress.org/plugins/wp-mail-smtp/"
+  },
+  {
+   "slug": "seo-by-rank-math",
+   "name": "Rank Math SEO",
+   "version": "1.0.280",
+   "activeInstalls": 4000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 2
+   },
+   "flow": {
+    "result": "0/2",
+    "what": "Sitemap and head meta need the Rank Math setup wizard first; the same happens on regular hosting"
+   },
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/seo-by-rank-math/"
+  },
+  {
+   "slug": "updraftplus",
+   "name": "UpdraftPlus",
+   "version": "1.26.8",
+   "activeInstalls": 4000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": "Admin pages load. Backups to local disk do not persist on Workers; remote storage not tested.",
+   "wpOrgUrl": "https://wordpress.org/plugins/updraftplus/"
+  },
+  {
+   "slug": "duplicate-post",
+   "name": "Yoast Duplicate Post",
+   "version": "4.7",
+   "activeInstalls": 3000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/duplicate-post/"
+  },
+  {
+   "slug": "duplicate-page",
+   "name": "Duplicate Page",
+   "version": "4.5.9",
+   "activeInstalls": 3000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/duplicate-page/"
+  },
+  {
+   "slug": "really-simple-ssl",
+   "name": "Really Simple Security",
+   "version": "9.8.3",
+   "activeInstalls": 3000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": "Needed the clock fix that is built into the hostlesswp runtime.",
+   "wpOrgUrl": "https://wordpress.org/plugins/really-simple-ssl/"
+  },
+  {
+   "slug": "jetpack",
+   "name": "Jetpack",
+   "version": "16.3",
+   "activeInstalls": 3000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 2
+   },
+   "flow": null,
+   "note": "Admin pages load. Connecting to WordPress.com needs interactive authorization and was not tested.",
+   "wpOrgUrl": "https://wordpress.org/plugins/jetpack/"
+  },
+  {
+   "slug": "insert-headers-and-footers",
+   "name": "WPCode",
+   "version": "2.4.0",
+   "activeInstalls": 3000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/insert-headers-and-footers/"
+  },
+  {
+   "slug": "hostinger",
+   "name": "Hostinger Tools",
+   "version": "3.0.79",
+   "activeInstalls": 3000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 3
+   },
+   "flow": null,
+   "note": "Admin pages load. Its features are tied to Hostinger hosting.",
+   "wpOrgUrl": "https://wordpress.org/plugins/hostinger/"
+  },
+  {
+   "slug": "all-in-one-seo-pack",
+   "name": "All in One SEO",
+   "version": "5.0.3",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/all-in-one-seo-pack/"
+  },
+  {
+   "slug": "redirection",
+   "name": "Redirection",
+   "version": "5.10.1",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": "Needed the clock fix that is built into the hostlesswp runtime.",
+   "wpOrgUrl": "https://wordpress.org/plugins/redirection/"
+  },
+  {
+   "slug": "wordpress-importer",
+   "name": "WordPress Importer",
+   "version": "0.9.6",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 0
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/wordpress-importer/"
+  },
+  {
+   "slug": "google-analytics-for-wordpress",
+   "name": "MonsterInsights",
+   "version": "11.3.0",
+   "activeInstalls": 2000000,
+   "status": "works-with-limits",
+   "checks": {
+    "activate": false,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 3
+   },
+   "flow": null,
+   "note": "Onboarding redirects to connect.monsterinsights.com with empty parameters and gets HTTP 400; cause not verified.",
+   "wpOrgUrl": "https://wordpress.org/plugins/google-analytics-for-wordpress/"
+  },
+  {
+   "slug": "classic-widgets",
+   "name": "Classic Widgets",
+   "version": "0.3",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 0
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/classic-widgets/"
+  },
+  {
+   "slug": "header-footer-elementor",
+   "name": "Ultimate Addons for Elementor",
+   "version": "2.9.5",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 0
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/header-footer-elementor/"
+  },
+  {
+   "slug": "wps-hide-login",
+   "name": "WPS Hide Login",
+   "version": "1.9.19",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/wps-hide-login/"
+  },
+  {
+   "slug": "advanced-custom-fields",
+   "name": "Advanced Custom Fields (ACF®)",
+   "version": "6.8.10",
+   "activeInstalls": 2000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 4
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/advanced-custom-fields/"
+  },
+  {
+   "slug": "essential-addons-for-elementor-lite",
+   "name": "Essential Addons for Elementor",
+   "version": "6.8.5",
+   "activeInstalls": 1000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 2
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/essential-addons-for-elementor-lite/"
+  },
+  {
+   "slug": "tinymce-advanced",
+   "name": "Advanced Editor Tools",
+   "version": "5.10.1",
+   "activeInstalls": 1000000,
+   "status": "works",
+   "checks": {
+    "activate": true,
+    "frontPage": true,
+    "dashboard": true,
+    "pluginPages": 1
+   },
+   "flow": null,
+   "note": null,
+   "wpOrgUrl": "https://wordpress.org/plugins/tinymce-advanced/"
+  }
+ ],
+ "features": [
+  {
+   "feature": "Pages, posts, comments, search, feeds",
+   "status": "works",
+   "note": ""
+  },
+  {
+   "feature": "Admin, login, user sessions",
+   "status": "works",
+   "note": "Existing logins stay valid: hostlesswp reuses the site keys and salts."
+  },
+  {
+   "feature": "REST API and block editor",
+   "status": "works",
+   "note": ""
+  },
+  {
+   "feature": "Existing media library files",
+   "status": "works",
+   "note": "Copied to your S3-compatible bucket at every deploy (only new or changed files)."
+  },
+  {
+   "feature": "New media uploads",
+   "status": "works",
+   "note": "Stored in your S3-compatible bucket. Up to 32 MB per file by default; images are processed with GD (no Imagick)."
+  },
+  {
+   "feature": "Plugins that cache generated files in wp-content/uploads",
+   "status": "not-yet",
+   "note": "They work, but rebuild those files on every request (for example Elementor CSS)."
+  },
+  {
+   "feature": "Outgoing email via PHP mail()",
+   "status": "no",
+   "note": "Use a mail plugin that sends through an HTTP API (not yet tested)."
+  },
+  {
+   "feature": "Installing or updating plugins and themes from the admin",
+   "status": "no",
+   "note": "Change them on your source site, then run `npx hostlesswp deploy` again."
+  },
+  {
+   "feature": "WP-Cron",
+   "status": "works",
+   "note": "Runs from a Cloudflare Cron Trigger every 15 minutes instead of on page loads."
+  },
+  {
+   "feature": "Multisite",
+   "status": "no",
+   "note": "Not supported yet; hostlesswp stops before deploying."
+  },
+  {
+   "feature": "Object cache drop-ins (Redis, Memcached)",
+   "status": "no",
+   "note": "Left out at build time; WordPress falls back to its built-in cache."
+  }
+ ]
+}

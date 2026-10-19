@@ -1,0 +1,5 @@
+source/
+.cache/
+reset-worker/src/snapshot.sql
+reset-worker/wrangler.jsonc
+.reset-token

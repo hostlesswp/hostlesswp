@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.playwright-mcp/
+.wrangler/
+hostlesswp-config.php

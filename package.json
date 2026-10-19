@@ -1,0 +1,52 @@
+{
+  "name": "hostlesswp",
+  "version": "0.1.0",
+  "description": "Move a running WordPress site onto Cloudflare Workers with one command: PHP compiled to WebAssembly, your existing MySQL behind Hyperdrive.",
+  "keywords": [
+    "wordpress",
+    "cloudflare",
+    "workers",
+    "hyperdrive",
+    "php-wasm",
+    "serverless",
+    "migration"
+  ],
+  "homepage": "https://hostlesswp.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hostlesswp/hostlesswp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hostlesswp/hostlesswp/issues"
+  },
+  "license": "GPL-2.0-or-later",
+  "author": "hostlesswp <oss@hostlesswp.com>",
+  "type": "module",
+  "bin": {
+    "hostlesswp": "bin/hostlesswp.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "runtime",
+    "data",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "@php-wasm/universal": "3.1.57",
+    "@php-wasm/web-8-3": "3.1.57",
+    "aws4fetch": "^1.0.20",
+    "fflate": "^0.8.3",
+    "mysql2": "^3.24.5",
+    "picocolors": "^1.1.1",
+    "wrangler": "^4.150.0"
+  }
+}
