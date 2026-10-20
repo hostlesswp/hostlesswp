@@ -10,6 +10,8 @@ HostlessWP takes the WordPress you already have (core, theme, plugins, media and
 
 **Live demo:** https://hostlesswp-demo.qc2uyes.workers.dev (log in with `demo` / `demo`; it resets every 3 hours, see [demo/](demo/README.md)).
 
+**Website:** [hostlesswp.com](https://hostlesswp.com) · [Plugin compatibility](https://hostlesswp.com/compatibility) · [Can WordPress run on Cloudflare?](https://hostlesswp.com/can-wordpress-run-on-cloudflare) · [Migrate WordPress to Cloudflare](https://hostlesswp.com/migrate-wordpress-to-cloudflare) · [Cost](https://hostlesswp.com/cost) · [Benchmarks](https://hostlesswp.com/benchmarks) · [HostlessWP vs EmDash](https://hostlesswp.com/vs/emdash)
+
 > **Status: early preview (v0.1).** It works on real sites in our tests, but expect rough edges. Your current site is never changed, so trying it is safe.
 
 ## Quick start
@@ -124,7 +126,7 @@ Starting PHP on a fresh Worker takes seconds, so pages for visitors who are not 
 
 ## What works and what does not
 
-The 30 most-installed plugins on WordPress.org load and work at page level, and WooCommerce checkout, the Elementor editor and Yoast sitemaps were tested end to end. Details per plugin: [`data/compat.json`](data/compat.json) (also shown on the website).
+The 30 most-installed plugins on WordPress.org load and work at page level, and WooCommerce checkout, the Elementor editor and Yoast sitemaps were tested end to end. Details per plugin: [`data/compat.json`](data/compat.json), also shown as a searchable table at [hostlesswp.com/compatibility](https://hostlesswp.com/compatibility).
 
 Not supported yet:
 
