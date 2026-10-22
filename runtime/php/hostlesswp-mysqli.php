@@ -1,6 +1,6 @@
 <?php
 /**
- * Userland mysqli for php-wasm builds without the mysqli extension.
+ * Userland mysqli: HostlessWP PHP has no mysqli extension.
  * Every query goes through the same Worker bridge as wpdb, so plugins that
  * call mysqli_* on $wpdb->dbh (backup/security plugins) keep working.
  */

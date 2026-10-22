@@ -14,6 +14,28 @@ function hostlesswp_env( $key ) {
 	return isset( $env[ $key ] ) ? (string) $env[ $key ] : false;
 }
 
+// HostlessWP PHP has no network stack and leaves out some extensions: HTTP from curl and from URL streams and
+// DNS lookups go through the Worker's fetch(), and fileinfo is matched in PHP.
+require_once __DIR__ . '/wp-content/hostlesswp-http.php';
+if ( ! function_exists( 'checkdnsrr' ) ) {
+	require_once __DIR__ . '/wp-content/hostlesswp-dns.php';
+}
+if ( ! extension_loaded( 'curl' ) ) {
+	require_once __DIR__ . '/wp-content/hostlesswp-curl.php';
+}
+if ( ! extension_loaded( 'fileinfo' ) ) {
+	require_once __DIR__ . '/wp-content/hostlesswp-fileinfo.php';
+}
+// GD decodes AVIF but has no encoder: the built-in imageavif() is disabled (runtime/src/index.js) because it reports
+// success after writing an empty file. It must exist for WordPress to accept AVIF uploads, whose sizes are saved as
+// WebP (hostlesswp-runtime.php).
+if ( ! function_exists( 'imageavif' ) && function_exists( 'imagecreatefromavif' ) ) {
+	function imageavif( $image, $file = null, $quality = -1, $speed = -1 ) {
+		trigger_error( 'imageavif(): AVIF encoding is not available, save as WebP instead', E_USER_WARNING );
+		return false;
+	}
+}
+
 define( 'DB_NAME', '{{DB_NAME}}' );
 define( 'DB_USER', 'hyperdrive' );
 define( 'DB_PASSWORD', '' );
@@ -33,6 +55,10 @@ foreach ( array( 'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'A
 unset( $hostlesswp_salts, $hostlesswp_k );
 
 $table_prefix = '{{TABLE_PREFIX}}';
+
+// PHP sessions live in the database: a Worker instance keeps files in memory only.
+require_once __DIR__ . '/wp-content/hostlesswp-session.php';
+session_set_save_handler( new HostlessWP_Session_Handler( $table_prefix ), true );
 
 // The site answers on whatever host the Worker is reached by (workers.dev while testing, your domain later),
 // without rewriting siteurl/home in the database.

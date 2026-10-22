@@ -1,13 +1,17 @@
-// hostlesswp runtime: WordPress on php-wasm inside a Cloudflare Worker; wpdb queries go to MySQL through Hyperdrive.
+// hostlesswp runtime: WordPress on HostlessWP PHP inside a Cloudflare Worker; wpdb queries go to MySQL through Hyperdrive.
 // Generated sites import this file unchanged; everything site-specific comes from env and site-manifest.json.
 import { loadPHPRuntime, PHP, PHPRequestHandler, setPhpIniEntries, __private__dont__use } from '@php-wasm/universal';
 import * as phpLoader from './vendor/php.js';
 import phpWasm from './vendor/php.wasm';
-import { mountLazyZip } from './lazyfs.js';
+import { mountLazyZip, unloadLazyZip, nextEpoch, mountRemoteZip, fetchLazyNode } from './lazyfs.js';
 import { createConnection } from 'mysql2/promise';
 import manifest from './site-manifest.json';
 import { serveUpload, flushUploads, mediaBridge, s3FromEnv, UPLOADS_URL } from './media.js';
 import { servePage, warmPage, bumpVersion, NOCACHE_HEADER } from './page-cache.js';
+import { sendmailHandler, parseSmtpUrl, smtpFromPhpMailer } from './mail.js';
+import { fetchCached } from './http.js';
+import { tcpWebSocket } from './sockets.js';
+import { sessionBridge } from './session.js';
 
 const DOCROOT = '/wordpress';
 // A request cancelled mid-flight can leave PHP suspended on a promise that never settles; after this long the
@@ -25,43 +29,102 @@ let inflightSince = 0;
 // Diagnostics: which isolate served a request and how many it served since PHP booted.
 const isolateId = Math.random().toString(36).slice(2, 8);
 let served = 0;
+// Static asset fetches (bundles) since the isolate started: each is a subrequest, which Workers limit per request.
+let assetFetches = 0;
 
 async function boot(env, origin) {
   const t0 = Date.now();
   const timing = {};
   // All bundles are fetched at once, while PHP starts; one after another they added up to seconds per cold start.
   const fetchAsset = async (p) => {
+    assetFetches++;
     const res = await env.ASSETS.fetch(new Request(origin + p));
     if (!res.ok) throw new Error('bundle fetch failed: ' + p + ' ' + res.status);
     return new Uint8Array(await res.arrayBuffer());
   };
-  const bundleFetches = [...manifest.bundles.map((b) => b.zip), ...manifest.bundles.flatMap((b) => b.opcache || [])].map(fetchAsset);
-  // A failed fetch is reported by Promise.all below; keep the others from surfacing as unhandled rejections.
-  for (const f of bundleFetches) f.catch(() => {});
+  // What a cold start fetches (lib/build.mjs, lib/node/precompile.mjs): the files PHP reads as data, the index of
+  // the zips fetched later (their central directories), the compiled scripts of the pages precompile visited and
+  // their function bodies. PHP sources and the other compiled scripts come in parts when PHP first reads one of
+  // their files. Few zips: every fetch is a subrequest, and Workers limit those per request.
+  // Without precompiled OPcache files every script compiles from source, so then all source parts come now.
+  const opcache = manifest.opcache;
+  const phpParts = manifest.bundles.flatMap((b) => b.php || []);
+  const OPCACHE = '/internal/shared/opcache';
+  const bundleFetches = [
+    ...manifest.data,
+    ...(manifest.index ? [manifest.index] : []),
+    ...(opcache ? [...opcache.hot, ...opcache.bodies] : phpParts.map((part) => part.zip)),
+  ].map(fetchAsset);
+  const scriptZips = [];
+  const dropScripts = () => {
+    for (const src of scriptZips) if (!src.reread) unloadLazyZip(src);
+    nextEpoch();
+  };
   // PHP reads settings and secrets from a JSON file in MEMFS (hostlesswp_env() in wp-config.php).
   const phpEnv = { WP_SALTS: env.WP_SALTS || '', WP_DEBUG: env.WP_DEBUG || '0', USE_ZEND_ALLOC: '0', S3_PUBLIC_URL: env.S3_PUBLIC_URL || '', S3_PREFIX: env.S3_PREFIX || '' };
+  // Workers' TCP sockets, for PHP's own (runtime/src/sockets.js). Elsewhere (Node, while precompiling) PHP has none.
+  let tcpConnect = null;
+  try {
+    tcpConnect = (await import('cloudflare:sockets')).connect;
+  } catch {}
   const runtimeId = await loadPHPRuntime(phpLoader, {
+    ...(tcpConnect ? { websocket: { decorator: () => tcpWebSocket(tcpConnect) } } : {}),
     instantiateWasm(imports, done) {
       WebAssembly.instantiate(phpWasm, imports).then((inst) => done(inst, phpWasm));
       return {};
     },
     ENV: phpEnv,
+    // PHP is about to read a file: fetch its zip (PHP sources, OPcache parts) if it is not here.
+    hostlesswpFetchNode: (node) => {
+      const pending = fetchLazyNode(node);
+      if (pending && current) current.stats[FS.getPath(node).startsWith(OPCACHE + '/') ? 'opcacheParts' : 'phpParts']++;
+      return pending;
+    },
   });
   const php = new PHP(runtimeId);
   const FS = php[__private__dont__use].FS;
+  php.setCommandSpawnHandler(
+    'sendmail',
+    sendmailHandler({
+      getSmtp: () => {
+        if (!current) return null;
+        const plugin = current.smtpNext;
+        current.smtpNext = null;
+        if (plugin) return smtpFromPhpMailer(plugin);
+        // "none": hostlesswp deploy was told not to send mail.
+        return current.env.SMTP_URL && current.env.SMTP_URL !== 'none' ? parseSmtpUrl(current.env.SMTP_URL) : null;
+      },
+      helo: () => (current && current.env.SITE_ORIGIN ? new URL(current.env.SITE_ORIGIN).hostname : 'localhost'),
+    }),
+  );
   timing.php = Date.now() - t0;
-  // Source bundles (core, theme, mu-plugins, one per plugin), then their precompiled OPcache file caches.
   const zips = await Promise.all(bundleFetches);
   timing.fetch = Date.now() - t0;
   let i = 0;
-  for (const b of manifest.bundles) mountLazyZip(FS, DOCROOT, zips[i++]);
+  for (const _ of manifest.data) mountLazyZip(FS, DOCROOT, zips[i++]);
+  const index = manifest.index ? zips[i++] : null;
+  const indexed = ([at, len]) => index.subarray(at, at + len);
+  for (const part of phpParts) {
+    if (opcache) mountRemoteZip(FS, DOCROOT, indexed(part.cdAt), () => fetchAsset(part.zip));
+  }
   // Read-only: scripts compiled at runtime (those precompile did not reach) stay in shared memory only. Otherwise
   // OPcache also writes them to its file cache, MEMFS in this isolate: 17 MB on a block editor page, enough to put a
   // Durable Object over its memory limit, and kept for an isolate that rarely serves another request.
   const readOnly = env.OPCACHE_WRITE !== '1';
-  for (const b of manifest.bundles) {
-    for (const z of b.opcache || []) mountLazyZip(FS, '/internal/shared/opcache', zips[i++], { retain: false, readOnly });
+  if (opcache) {
+    // Compiled scripts are read once (when PHP loads them into shared memory): their zips are dropped after each
+    // request and fetched again only if PHP reads one of them later. A zip PHP reads from in two requests (scripts
+    // that did not fit in shared memory) is kept from then on.
+    for (const name of opcache.hot) scriptZips.push(mountLazyZip(FS, OPCACHE, zips[i++], { retain: false, readOnly, load: () => fetchAsset(name) }));
+    for (const _ of opcache.bodies) mountLazyZip(FS, OPCACHE, zips[i++], { retain: false, readOnly });
+    for (const part of opcache.cold) scriptZips.push(mountRemoteZip(FS, OPCACHE, indexed(part.cdAt), () => fetchAsset(part.zip), { retain: false, readOnly }));
+  } else {
+    for (const _ of phpParts) mountLazyZip(FS, DOCROOT, zips[i++]);
   }
+  // The closures made in boot() keep its scope alive for the isolate's life: let go of the fetched zips here, or
+  // the script zips dropped after a request (unloadLazyZip) would stay in memory through these arrays.
+  zips.length = 0;
+  bundleFetches.length = 0;
   php.writeFile('/internal/shared/hostlesswp-env.json', JSON.stringify(phpEnv));
   php.mkdir(DOCROOT + '/wp-content/uploads');
   php.mkdir('/tmp');
@@ -71,22 +134,31 @@ async function boot(env, origin) {
     upload_max_filesize: (Number(env.S3_MAX_UPLOAD_MB) || 32) + 'M',
     post_max_size: (Number(env.S3_MAX_UPLOAD_MB) || 32) + 8 + 'M',
     max_execution_time: '0',
-    // php-wasm cannot spawn processes: a call errors inside the runtime and leaves the request hanging, which
+    // PHP cannot spawn processes here: a call errors inside the runtime and leaves the request hanging, which
     // blocks the isolate's queue (Site Health > Info runs exec('gs --version')). Disabled, callers that check
     // function_exists() skip them.
-    disable_functions: 'exec,shell_exec,system,passthru,popen,proc_open,pcntl_exec',
+    // The DNS functions are disabled so runtime/php/hostlesswp-dns.php can stand in for them (PHP.wasm's own
+    // answer every lookup with a placeholder), imageavif() so wp-config.php can (it writes empty files).
+    disable_functions: 'exec,shell_exec,system,passthru,popen,proc_open,pcntl_exec,gethostbyname,gethostbynamel,gethostbyaddr,checkdnsrr,dns_check_record,getmxrr,dns_get_mx,dns_get_record,imageavif',
+    // mail() pipes to this; runtime/src/mail.js answers in its place and sends over SMTP.
+    sendmail_path: '/usr/sbin/sendmail -t -i',
+    // TLS over PHP's sockets (ssl://, stream_socket_enable_crypto()) verifies peers against WordPress's CA bundle.
+    'openssl.cafile': DOCROOT + '/wp-includes/certificates/ca-bundle.crt',
+    // Unknown session ids are replaced, not adopted (session fixation). The id check is the same lookup as the read
+    // (runtime/php/hostlesswp-session.php), so it costs no extra query.
+    'session.use_strict_mode': '1',
     display_errors: '0',
     error_reporting: 'E_ALL',
     'opcache.enable': '1',
     'opcache.enable_cli': '1',
-    // Shared memory is allocated inside the wasm heap. Above ~64MB the platform recycled the isolate after nearly
-    // every request; 40MB fits core, 56MB fits WooCommerce-sized sites.
-    'opcache.memory_consumption': env.OPCACHE_MB || (manifest.plugins.length ? '56' : '40'),
+    // Shared memory is allocated inside the wasm heap, all of it up front. Function bodies stay out of it until
+    // first called, so 40MB holds the scripts of a WooCommerce page; scripts that do not fit load into request memory.
+    'opcache.memory_consumption': env.OPCACHE_MB || '40',
     'opcache.interned_strings_buffer': '8',
     'opcache.max_accelerated_files': '20000',
     'opcache.validate_timestamps': '0',
     'opcache.file_cache_only': '0',
-    'opcache.save_comments': '1',
+    'opcache.save_comments': manifest.docComments === false ? '0' : '1',
     // MEMFS mtimes equal boot time; the default 2s guard would skip caching right after a cold start.
     'opcache.file_update_protection': '0',
   });
@@ -99,7 +171,7 @@ async function boot(env, origin) {
     getFileNotFoundAction: () => ({ type: 'internal-redirect', uri: '/index.php' }),
   });
   timing.boot = Date.now() - t0;
-  return { php, handler, FS, fetched: new Map(), timing };
+  return { php, handler, FS, fetched: new Map(), timing, dropScripts };
 }
 
 async function getConn(slot = 'conn') {
@@ -246,8 +318,19 @@ async function httpBridge(msg) {
 
 async function bridge(msg) {
   if (msg.op === 'http') return httpBridge(msg);
+  if (msg.op === 'fetch') return JSON.stringify(await Promise.all(msg.requests.map((r) => fetchCached(r))));
+  // A PHPMailer SMTP plugin's settings, for the message mail() is about to hand to sendmail (runtime/src/mail.js).
+  if (msg.op === 'smtp-next') {
+    current.smtpNext = msg;
+    return '{}';
+  }
   // Size of PHP's linear memory, for code that trades memory for fewer requests (admin REST preloading).
-  if (msg.op === 'heap') return JSON.stringify({ mb: Math.round(current.php[__private__dont__use].HEAPU8.buffer.byteLength / 1048576) });
+  if (msg.op === 'heap') {
+    // mb: the wasm memory; usedMb: how much of it PHP has taken (the allocator's break).
+    const mod = current.php[__private__dont__use];
+    const used = new Uint32Array(mod.HEAPU8.buffer)[mod.wasmExports.emscripten_get_sbrk_ptr() >> 2];
+    return JSON.stringify({ mb: Math.round(mod.HEAPU8.buffer.byteLength / 1048576), usedMb: Math.round(used / 1048576) });
+  }
   if (msg.op === 'cache-bump') {
     await bumpVersion(current.env);
     return '{}';
@@ -255,6 +338,19 @@ async function bridge(msg) {
   if (msg.op === 'nocache') {
     current.noCache = true;
     return '{}';
+  }
+  if (msg.op === 'session') {
+    try {
+      const conn = await getConn();
+      return JSON.stringify(
+        await sessionBridge(async (sql, params) => {
+          current.stats.queries++;
+          return (await conn.query(sql, params))[0];
+        }, msg),
+      );
+    } catch (e) {
+      return JSON.stringify({ error: e.message || String(e) });
+    }
   }
   if (msg.op === 's3list' || msg.op === 's3get' || msg.op === 's3delete') return mediaBridge(msg, { FS: current.FS, s3: s3FromEnv(current.env), fetched: current.fetched });
   try {
@@ -285,6 +381,7 @@ async function bridge(msg) {
 
 async function handle(request, env, ctx) {
   const url = new URL(request.url);
+  const fetches0 = assetFetches;
   const cold = !booted;
   if (!booted) {
     booted = boot(env, url.origin).catch((e) => {
@@ -295,7 +392,7 @@ async function handle(request, env, ctx) {
   const state = await booted;
   if (cold) served = 0;
   served++;
-  current = { env, php: state.php, FS: state.FS, fetched: state.fetched, conn: null, conn2: null, noCache: false, sqlMode: null, prelude: [], foundRows: null, stats: { queries: 0, dbMs: 0 } };
+  current = { env, php: state.php, FS: state.FS, fetched: state.fetched, conn: null, conn2: null, noCache: false, smtpNext: null, sqlMode: null, prelude: [], foundRows: null, stats: { queries: 0, dbMs: 0, opcacheParts: 0, phpParts: 0 } };
   const t0 = Date.now();
   const headers = {};
   request.headers.forEach((v, k) => (headers[k] = v));
@@ -332,6 +429,8 @@ async function handle(request, env, ctx) {
   if (mediaError) {
     return new Response('The file could not be saved to media storage. Check `wrangler tail` for details.', { status: 502, headers: { 'content-type': 'text/plain; charset=utf-8' } });
   }
+  // The scripts PHP loaded are in shared memory now; their file cache copies are not needed any more.
+  state.dropScripts();
   const out = new Headers();
   for (const [k, vals] of Object.entries(res.headers)) for (const v of vals) out.append(k, v);
   // Timing for `hostlesswp` diagnostics; harmless to expose (no data, only counts and milliseconds).
@@ -344,7 +443,7 @@ async function handle(request, env, ctx) {
     booted = null;
   }
   if (noCache) out.set(NOCACHE_HEADER, '1');
-  out.set('x-hostlesswp', JSON.stringify({ cold, phpMs: Date.now() - t0, queries: stats.queries, dbMs: stats.dbMs, isolate: isolateId, served, ...(cold ? { boot: state.timing } : {}), wasmMB: heap ? Math.round(heap.buffer.byteLength / 1048576) : 0 }));
+  out.set('x-hostlesswp', JSON.stringify({ cold, phpMs: Date.now() - t0, queries: stats.queries, dbMs: stats.dbMs, isolate: isolateId, served, ...(cold ? { boot: state.timing } : {}), fetches: assetFetches - fetches0, ...(stats.opcacheParts ? { opcacheParts: stats.opcacheParts } : {}), ...(stats.phpParts ? { phpParts: stats.phpParts } : {}), wasmMB: heap ? Math.round(heap.buffer.byteLength / 1048576) : 0 }));
   return new Response(request.method === 'HEAD' ? null : res.bytes, { status: res.httpStatusCode, headers: out });
 }
 

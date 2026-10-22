@@ -8,7 +8,7 @@ import { zipSync } from 'fflate';
 import { buildSite } from '../lib/build.mjs';
 import { PKG_ROOT } from '../lib/run.mjs';
 
-// Runs PHP (the real php-wasm build and its Emscripten MEMFS) against lazily mounted zips.
+// Runs PHP (the real HostlessWP PHP build and its Emscripten MEMFS) against lazily mounted zips.
 function runPhp(code) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hwp-lazy-site-'));
   fs.mkdirSync(path.join(root, 'wp-includes'), { recursive: true });

@@ -40,8 +40,9 @@ After changing plugins, themes or WordPress on the source site, run `npx hostles
 | Database access | Creates a Hyperdrive config to your MySQL, either over the internet with SSL or through a Cloudflare Tunnel run from your server. Caching is off, because WordPress reads its own writes | Creates resources in your Cloudflare account |
 | Placement | Locates your database and runs the Worker next to it (`placement.region`) | No |
 | Media storage | Asks for your S3-compatible bucket and checks the key can write, read, list and delete there | Writes and deletes one probe object in the bucket |
+| Email | Unless an SMTP plugin is active, asks for the SMTP server WordPress sends email through and checks the login | Logs in to the SMTP server, sends nothing |
 | Package | Bundles WordPress, the active theme (and parent), active plugins, mu-plugins and translations; copies new or changed media to your bucket (never deletes there) | Writes to `~/.hostlesswp/sites/<name>/` and your bucket |
-| Precompile | Renders a few pages locally against your database and packs PHP's OPcache, so new Worker instances start faster | Same reads and writes any visitor causes |
+| Precompile | Renders a few pages locally against your database, compiles every other PHP file without running it, and packs PHP's OPcache, so new Worker instances start faster | Same reads and writes any visitor causes |
 | Deploy | Deploys the Worker with your site's own keys and salts as a secret, so existing logins stay valid; adds a Cron Trigger for WP-Cron | Deploys to `<name>.<subdomain>.workers.dev` |
 | Verify | Requests the home page and reports status, PHP time and query count | No |
 
@@ -53,7 +54,7 @@ Your answers during setup (Cloudflare account, database access, region, media st
 Visitor ──► Cloudflare edge ──► static files (theme/plugin assets, wp-includes)
                      │
                      └──────► Worker next to your database
-                                php-wasm (PHP 8.3) + OPcache + precompiled scripts
+                                HostlessWP PHP (PHP 8.3) + OPcache + precompiled scripts
                                 WordPress core, your theme and plugins in memory
                                        │
                                        └──► Hyperdrive ──► your MySQL (SSL or Tunnel)
@@ -63,9 +64,15 @@ Visitor ──► Cloudflare edge ──► static files (theme/plugin assets, w
 The runtime layer is small and lives in [`runtime/`](runtime):
 
 - **Database bridge.** A `db.php` drop-in sends every `wpdb` query to the Worker, which runs it through Hyperdrive. A userland `mysqli` covers plugins that use it directly. Hyperdrive can run consecutive statements on different server connections, so session state is carried per statement (`SET_VAR` hints), `SELECT @@var` is answered from `SHOW VARIABLES`, and `SQL_CALC_FOUND_ROWS` paging runs as a parallel `COUNT`.
-- **HTTP.** `wp_remote_*` calls go through the Worker's `fetch()`.
+- **HTTP.** PHP has no network stack in a Worker, so outgoing requests go through the Worker's `fetch()`: `wp_remote_*` calls, a userland `curl_*` (including `curl_multi`, whose requests run in parallel) for plugins and SDKs that call curl directly, and `http://` / `https://` streams (`file_get_contents()` of a URL, `fopen()`, `copy()`, `getimagesize()`). DNS functions (`checkdnsrr()`, `getmxrr()`, `dns_get_record()`, `gethostbyname()`) ask Cloudflare's DNS over HTTPS.
+- **Sockets.** `fsockopen()`, `stream_socket_client()` and what is built on them (SMTP clients, Redis through Predis, other TCP protocols) open real TCP connections with Workers' `connect()`; TLS (`ssl://`, `stream_socket_enable_crypto()`) runs in PHP's OpenSSL and checks certificates against WordPress's CA bundle. Workers do not allow port 25 or Cloudflare's own IP addresses.
+- **Sessions.** PHP sessions (`$_SESSION`) are kept in your database, table `<prefix>hostlesswp_sessions`, created on the first write: a Worker instance has only memory for files, and a site runs on several instances.
+- **Email.** `mail()`, and with it `wp_mail()`, is sent over SMTP from the Worker (see [Email](#email)).
 - **Clock.** Workers freeze the clock during CPU work; PHP functions that wait for the clock to move (`uniqid()`) would spin, so the clock is made strictly monotonic.
-- **OPcache.** php-wasm's OPcache does not start by default (its SAPI is not on OPcache's whitelist); the build patches that, uses shared memory, and mounts precompiled scripts. The mounted file cache is read-only at runtime: scripts compiled on the Worker would otherwise be written to memory as well.
+- **PHP.** HostlessWP PHP is PHP 8.3 compiled to WebAssembly, our own build of [php-wasm](https://github.com/WordPress/wordpress-playground) from WordPress Playground ([`runtime/hostlesswp-php`](runtime/hostlesswp-php/README.md)).
+- **OPcache.** php-wasm's OPcache does not start by default (its SAPI is not on OPcache's whitelist); HostlessWP PHP patches that, uses shared memory, and mounts precompiled scripts. The mounted file cache is read-only at runtime: scripts compiled on the Worker would otherwise be written to memory as well.
+- **Files on first read.** A Worker instance starts with the files PHP reads as data (and the compiled scripts of the pages precompile visited); PHP sources and the rest of the compiled scripts are listed but fetched in small parts only when PHP first reads one, so what an instance holds in memory follows what its requests use, not the size of your plugins. Compiled scripts are released once PHP has loaded them.
+- **Function bodies on first call.** A WordPress request loads every function of every file it includes, but runs only about a fifth of them. In HostlessWP PHP, OPcache keeps the compiled body of each larger function in a separate compressed file and loads it the first time the function is called. On the WooCommerce demo this lowered PHP's memory by 15 to 20 MB per request.
 - **WP-Cron** runs from a Cloudflare Cron Trigger every 15 minutes instead of during page views.
 - **Media.** `wp-content/uploads` lives in your S3-compatible bucket. PHP writes uploads to memory as usual; after each request the Worker copies new files to the bucket. Unique file names are checked against the bucket, originals are fetched when you edit an image, and deleting an attachment deletes its files. Media URLs stay `/wp-content/uploads/...` and are served from the bucket (cached at the edge) without starting PHP; set a public or CDN address for the bucket to serve new media from there instead.
 
@@ -87,6 +94,7 @@ npx hostlesswp deploy    rebuild and redeploy after changing plugins, themes or 
 | `--account <id>` | Cloudflare account, when you have several |
 | `--db-host`, `--db-port`, `--db-user`, `--db-password`, `--db-name` | override `wp-config.php` |
 | `--s3-endpoint`, `--s3-region`, `--s3-bucket`, `--s3-prefix`, `--s3-public-url` | media storage; keys come from `HOSTLESSWP_S3_ACCESS_KEY_ID` and `HOSTLESSWP_S3_SECRET_ACCESS_KEY` |
+| `--smtp-url <url>\|none` | SMTP server for email (`smtps://user:pass@host:465` or `smtp://...:587`); also `HOSTLESSWP_SMTP_URL` |
 | `--resync-uploads` | overwrite media in the bucket that differs from this server (size or checksum) |
 | `--no-precompile` | skip precompiling (faster deploy, slower cold starts) |
 | `--no-page-cache` | serve every page view through PHP (no page cache) |
@@ -112,6 +120,15 @@ The Worker has no lasting disk, so `wp-content/uploads` is kept in S3-compatible
 - The bucket can stay private. Media is served through the Worker at the usual `/wp-content/uploads/...` URLs and cached at the edge. Each media request counts as a Worker request; on image-heavy sites, give the bucket a public or CDN address (`--s3-public-url`, for R2 a custom domain on the bucket) and new media URLs point there directly.
 - Use `--s3-prefix` to share one bucket between several sites.
 
+## Email
+
+`mail()` and `wp_mail()` are delivered over SMTP from the Worker, through the server of:
+
+1. your SMTP plugin, if one is set up (WP Mail SMTP, Easy WP SMTP and others that configure WordPress's PHPMailer for SMTP): its settings are used as they are;
+2. otherwise the server you give the setup: without an SMTP plugin, `npx hostlesswp` and `deploy` ask for the server, port, user name and password, check the login from your machine, and keep the answer in `hostlesswp-config.php` (the Worker gets it as the `SMTP_URL` secret). Without a terminal, pass `--smtp-url smtps://user%40example.com:password@smtp.example.com:465` (TLS) or `smtp://...:587` (STARTTLS), or set `HOSTLESSWP_SMTP_URL`; `--smtp-url none` turns it off.
+
+Port 25 is closed on Workers; use 465 or 587. Mail plugins that send over an HTTP API (SendGrid, Mailgun, Postmark and the like) work as well. Without either, sending fails right away and WordPress says the email could not be sent.
+
 ## Page cache
 
 Starting PHP on a fresh Worker takes seconds, so pages for visitors who are not logged in are cached in Workers KV (a namespace named `<worker>-page-cache`, created on deploy) and answered without starting PHP.
@@ -130,14 +147,15 @@ The 30 most-installed plugins on WordPress.org load and work at page level, and 
 
 Not supported yet:
 
-- **Email through PHP `mail()`.** Use a mail plugin that sends over an HTTP API.
 - **Installing or updating plugins and themes from the admin.** Change them on the source site and run `npx hostlesswp deploy`.
 - **Multisite.** hostlesswp stops before deploying.
 - **Object cache drop-ins** (Redis, Memcached) are left out; WordPress uses its built-in cache.
 - Theme and plugin files larger than 25 MiB are left out of static assets (Workers limit). Media files under 2 GB are copied to your bucket.
 - **Uploads over 32 MB** by default (`s3.maxUploadMb` in `hostlesswp-config.php`; the Worker request size limit still applies).
 - **Plugins that cache generated files in `wp-content/uploads`** (Elementor CSS, for example) work, but rebuild those files on every request.
-- **Imagick** is not available; images are processed with GD.
+- **Imagick** is not available; images are processed with GD. **AVIF** uploads work, but the sizes WordPress makes from them are saved as WebP (GD here decodes AVIF and cannot encode it).
+- **Very large images.** GD holds the whole image in memory while WordPress makes the sizes, so a large photo can run out of memory and the upload fails. Measured: JPEG works at 3000x2000 and fails at 4000x3000; AVIF works at 2560x1920 and fails at 3000x2000. Resize before uploading.
+- After `file_get_contents()` of a URL, `$http_response_header` is not set; `stream_get_meta_data()` of an opened URL has the headers.
 - **Thumbnail regeneration plugins** that read originals from disk do not see them (they are in the bucket); editing images in the media library works.
 
 ## Performance
@@ -168,6 +186,7 @@ bin/hostlesswp.mjs        CLI entry
 lib/                   wizard steps, build, Cloudflare (via Wrangler), precompile
 runtime/src/           the Worker (index.js) and lazy zip file system
 runtime/php/           wp-config template, db.php drop-in, mysqli polyfill, runtime mu-plugin
+runtime/hostlesswp-php/  HostlessWP PHP, the PHP 8.3 WebAssembly build the Worker runs
 data/compat.json       tested plugins and features (used by the CLI and the website)
 demo/                  the public demo: source site setup, demo rules, reset Worker
 test/                  unit tests (`npm test`)
@@ -179,7 +198,7 @@ Adding a plugin to the compatibility list: deploy a site with only that plugin a
 
 ## Credits
 
-- [WordPress Playground](https://github.com/WordPress/wordpress-playground) for php-wasm (`@php-wasm/*`), which makes PHP in WebAssembly possible
+- [WordPress Playground](https://github.com/WordPress/wordpress-playground) for php-wasm (`@php-wasm/*`), which makes PHP in WebAssembly possible and which HostlessWP PHP is built from
 - [Cloudflare Workers](https://developers.cloudflare.com/workers/), [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) and [Wrangler](https://developers.cloudflare.com/workers/wrangler/)
 
 HostlessWP is an independent project and is not affiliated with Cloudflare, Automattic or WordPress.org.

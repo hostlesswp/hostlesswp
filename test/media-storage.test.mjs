@@ -14,7 +14,11 @@ const S3 = { endpoint: 'https://acct.r2.cloudflarestorage.com', region: 'auto', 
 // The wizard prints through clack; keep that off stdout, which the test runner uses to talk to this process.
 function silenceUi(t) {
   const orig = process.stdout.write;
-  process.stdout.write = () => true;
+  // Only the prompts' text: the test runner reports through stdout too.
+  process.stdout.write = function (chunk, ...rest) {
+    if (typeof chunk === 'string' && /[│◇◆▲■●○└┌]/.test(chunk)) return true;
+    return orig.call(this, chunk, ...rest);
+  };
   t.after(() => (process.stdout.write = orig));
 }
 

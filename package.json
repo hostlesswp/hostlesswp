@@ -1,6 +1,6 @@
 {
   "name": "hostlesswp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Move a running WordPress site onto Cloudflare Workers with one command: PHP compiled to WebAssembly, your existing MySQL behind Hyperdrive.",
   "keywords": [
     "wordpress",
@@ -42,7 +42,7 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "@php-wasm/universal": "3.1.57",
-    "@php-wasm/web-8-3": "3.1.57",
+    "@php-wasm/util": "3.1.57",
     "aws4fetch": "^1.0.20",
     "fflate": "^0.8.3",
     "mysql2": "^3.24.5",

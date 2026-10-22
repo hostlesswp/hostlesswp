@@ -3,6 +3,7 @@
 // path is first looked up (or the directory is listed), and a file's bytes are inflated from the retained
 // (compressed) zip only when PHP first touches node.contents. A request reads ~2000 of a site's ~16000 files,
 // and every MEMFS node costs close to 1 KB of heap, which counts against the Worker memory limit.
+// A remote zip is mounted from its central directory alone and fetched when PHP first reads one of its files.
 import { inflateSync } from 'fflate';
 
 function u16(b, o) {
@@ -19,21 +20,23 @@ function centralDirectory(zip) {
   throw new Error('zip: end of central directory not found');
 }
 
-// Reads one central directory entry: where its data starts and how it is stored.
-function entryAt(zip, p) {
-  const local = u32(zip, p + 42);
+// Reads one central directory entry (at p in cd, the zip itself or only its central directory): where its data
+// starts in the zip and how it is stored.
+function entryAt(cd, p, zip) {
+  const local = u32(cd, p + 42);
   return {
-    method: u16(zip, p + 10),
-    csize: u32(zip, p + 20),
-    usize: u32(zip, p + 24),
+    method: u16(cd, p + 10),
+    csize: u32(cd, p + 20),
+    usize: u32(cd, p + 24),
     start: local + 30 + u16(zip, local + 26) + u16(zip, local + 28),
   };
 }
 
-export const lazyStats = { files: 0, nodes: 0, inflated: 0, inflatedBytes: 0, retainedBytes: 0 };
+export const lazyStats = { files: 0, nodes: 0, inflated: 0, inflatedBytes: 0, retainedBytes: 0, remoteLoads: 0 };
 
-// A directory index: { parts: [{ zip, retain, files: Map<name, central directory offset> }], dirs: Map<name, index> }.
+// A directory index: { parts: [{ cd, src, retain, files: Map<name, offset in cd> }], dirs: Map<name, index> }.
 // One part per zip that has files directly in the directory; a later zip wins when two hold the same name.
+// src holds the zip bytes ({ zip }), or for a remote zip { zip: null, load } until the zip is fetched.
 const newIndex = () => ({ parts: [], dirs: new Map() });
 
 function mergeIndex(into, from) {
@@ -45,12 +48,13 @@ function mergeIndex(into, from) {
   }
 }
 
-function zipIndex(zip, retain) {
+// zip: a whole zip, or (cdOnly) only its central directory and end record.
+function zipIndex(zip, retain, src, cdOnly = false) {
   const cd = centralDirectory(zip);
   const dec = new TextDecoder();
   const root = newIndex();
   const partOf = new Map(); // index -> its part for this zip
-  for (let n = 0, p = cd.offset; n < cd.count; n++) {
+  for (let n = 0, p = cdOnly ? 0 : cd.offset; n < cd.count; n++) {
     if (u32(zip, p) !== 0x02014b50) throw new Error('zip: bad central directory entry');
     const nameLen = u16(zip, p + 28);
     const segs = dec.decode(zip.subarray(p + 46, p + 46 + nameLen)).split('/');
@@ -64,7 +68,7 @@ function zipIndex(zip, retain) {
     if (file) {
       let part = partOf.get(idx);
       if (!part) {
-        part = { zip, retain, files: new Map() };
+        part = { cd: zip, src, retain, files: new Map() };
         partOf.set(idx, part);
         idx.parts.push(part);
       }
@@ -80,8 +84,12 @@ function zipIndex(zip, retain) {
 // feeding shared memory); only the most recently inflated entry is kept, since a read() sequence touches it repeatedly.
 let lastInflated = null;
 
-function makeLazyFile(node, zip, e, retain) {
-  node.usedBytes = e.usize;
+function makeLazyFile(FS, node, part, p) {
+  const { cd, src, retain } = part;
+  let e = null;
+  node.usedBytes = u32(cd, p + 24);
+  // A remote or unloaded zip is fetched when PHP first reads one of its files (fetchLazyNode).
+  if (src.load) node.lazyRemote = src;
   const materialize = (value) => {
     Object.defineProperty(node, 'contents', { value, writable: true, configurable: true, enumerable: true });
     return value;
@@ -90,13 +98,21 @@ function makeLazyFile(node, zip, e, retain) {
     configurable: true,
     enumerable: true,
     get() {
+      const zip = src.zip;
+      if (!zip) throw new FS.ErrnoError(29); // EIO: read before the zip was fetched
+      e ||= entryAt(cd, p, zip);
+      // Read again in a later request: whatever read it did not keep it (OPcache could not fit the script into
+      // shared memory), so the zip is worth keeping.
+      if (node.lazyEpoch !== undefined && node.lazyEpoch !== epoch) src.reread = true;
+      node.lazyEpoch = epoch;
       if (!retain && lastInflated && lastInflated.e === e) return lastInflated.data;
       const raw = zip.subarray(e.start, e.start + e.csize);
-      const data = e.method === 0 ? raw.slice() : inflateSync(raw, { out: new Uint8Array(e.usize) });
+      // A stored entry read once (the OPcache function bodies, read at an offset each time) is used in place.
+      const data = e.method === 0 ? (retain ? raw.slice() : raw) : inflateSync(raw, { out: new Uint8Array(e.usize) });
       lazyStats.inflated++;
       lazyStats.inflatedBytes += e.usize;
       if (!retain) {
-        lastInflated = { e, data };
+        lastInflated = { e, data, src };
         return data;
       }
       return materialize(data);
@@ -128,7 +144,7 @@ function lazyOpsFor(base, FS) {
         const p = part.files.get(name);
         if (p === undefined) continue;
         node = base.mknod(parent, name, 0o100644, 0);
-        makeLazyFile(node, part.zip, entryAt(part.zip, p), part.retain);
+        makeLazyFile(FS, node, part, p);
       }
       if (node) for (const part of idx.parts) part.files.delete(name);
     }
@@ -186,8 +202,72 @@ function makeLazyDir(FS, node, index) {
 // Adds a zip's files below root. Directories created earlier (by a previous mount or at runtime) are
 // extended in place, so several zips can share a directory. readOnly: nothing new can be created below root
 // (existing files stay writable).
-export function mountLazyZip(FS, root, zip, { retain = true, readOnly = false } = {}) {
+// A zip's bytes and how to fetch them again: { zip, load, reread }. load is optional for mountLazyZip; with it
+// the zip can be unloaded (unloadLazyZip) and is fetched again when PHP next reads one of its files.
+function makeSrc(zip, load) {
+  const src = {
+    zip,
+    reread: false,
+    loading: null,
+    load:
+      load &&
+      (() =>
+        (src.loading ||= load().then(
+          (bytes) => {
+            src.zip = bytes;
+            src.loading = null;
+            lazyStats.retainedBytes += bytes.length;
+            lazyStats.remoteLoads++;
+          },
+          (e) => {
+            src.loading = null;
+            throw e;
+          },
+        ))),
+  };
+  return src;
+}
+
+// Requests are numbered so that a file read in more than one request can be told apart (see src.reread).
+let epoch = 0;
+export function nextEpoch() {
+  epoch++;
+}
+
+export function mountLazyZip(FS, root, zip, { retain = true, readOnly = false, load = null } = {}) {
   lazyStats.retainedBytes += zip.length;
+  const src = makeSrc(zip, load);
+  // An unloadable zip is indexed from a copy of its central directory, so the zip itself can be freed.
+  if (load) attachIndex(FS, root, zipIndex(zip.slice(centralDirectory(zip).offset), retain, src, true), readOnly);
+  else attachIndex(FS, root, zipIndex(zip, retain, src), readOnly);
+  return src;
+}
+
+// Like mountLazyZip, but only the zip's central directory is here: its files exist with their sizes, and load()
+// fetches the zip when PHP first reads one of them (see fetchLazyNode).
+export function mountRemoteZip(FS, root, cd, load, { retain = true, readOnly = false } = {}) {
+  lazyStats.retainedBytes += cd.length;
+  const src = makeSrc(null, load);
+  attachIndex(FS, root, zipIndex(cd, retain, src, true), readOnly);
+  return src;
+}
+
+// Frees a zip's bytes; its files stay listed and are fetched again when read (needs load).
+export function unloadLazyZip(src) {
+  if (!src.zip || !src.load) return;
+  lazyStats.retainedBytes -= src.zip.length;
+  src.zip = null;
+  if (lastInflated && lastInflated.src === src) lastInflated = null;
+}
+
+// For PHP's hook before reading a file: false if the node's contents are here, else a promise of true once fetched.
+export function fetchLazyNode(node) {
+  const src = node.lazyRemote;
+  if (!src || src.zip) return false;
+  return src.load().then(() => true);
+}
+
+function attachIndex(FS, root, index, readOnly) {
   FS.mkdirTree(root);
   const attach = (node, index) => {
     if (readOnly) node.lazyReadOnly = true;
@@ -200,5 +280,5 @@ export function mountLazyZip(FS, root, zip, { retain = true, readOnly = false } 
     }
     makeLazyDir(FS, node, index);
   };
-  attach(FS.lookupPath(root).node, zipIndex(zip, retain));
+  attach(FS.lookupPath(root).node, index);
 }

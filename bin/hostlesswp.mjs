@@ -32,6 +32,8 @@ ${pc.bold('Options')}
   --s3-prefix <path>          key prefix inside the bucket (default: none)
   --s3-public-url <url>       public or CDN address of the bucket (default: media is served through the Worker)
                               keys: HOSTLESSWP_S3_ACCESS_KEY_ID, HOSTLESSWP_S3_SECRET_ACCESS_KEY
+  --smtp-url <url>|none       SMTP server for email: smtps://user:pass@host:465 or smtp://...:587 (default: asked)
+                              or HOSTLESSWP_SMTP_URL
   --resync-uploads            overwrite media in the bucket that differs from this server (size or checksum)
   --no-precompile             skip precompiling PHP (faster deploy, slower cold starts)
   --no-page-cache             serve every page view through PHP (no page cache)
@@ -54,7 +56,9 @@ function parseArgs(argv) {
     else if (a === '-v' || a === '--version') flags.version = true;
     else if (a.startsWith('--no-')) flags[a.slice(5)] = false;
     else if (a.startsWith('--')) {
-      const [k, v] = a.slice(2).split('=', 2);
+      // Split at the first "=" only: values (URLs, passwords) may contain more.
+      const eq = a.indexOf('=');
+      const [k, v] = eq < 0 ? [a.slice(2), undefined] : [a.slice(2, eq), a.slice(eq + 1)];
       if (v !== undefined) flags[k] = v;
       else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) flags[k] = argv[++i];
       else flags[k] = true;

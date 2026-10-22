@@ -61,9 +61,9 @@
    },
    "flow": {
     "result": "6/7",
-    "what": "Form list, form page, submission accepted; sending the email fails because PHP mail() is not available"
+    "what": "Form list, form page, submission accepted; no email was sent in the test (it ran before outgoing email was supported)"
    },
-   "note": "Email notifications fail unless an API-based mail plugin is configured (not tested).",
+   "note": "Email notifications go out through the SMTP server set up for the site (not tested end to end yet).",
    "wpOrgUrl": "https://wordpress.org/plugins/contact-form-7/"
   },
   {
@@ -537,9 +537,34 @@
    "note": "They work, but rebuild those files on every request (for example Elementor CSS)."
   },
   {
-   "feature": "Outgoing email via PHP mail()",
+   "feature": "Outgoing email (wp_mail, PHP mail())",
+   "status": "works",
+   "note": "Sent over SMTP from the Worker: through your SMTP plugin's server (WP Mail SMTP and the like), or the one you enter during setup. Ports 465 and 587; Workers block port 25."
+  },
+  {
+   "feature": "HTTP from plugins (curl, file_get_contents of URLs)",
+   "status": "works",
+   "note": "curl_*() and http(s):// streams send through the Worker's fetch(); curl_multi requests run in parallel. Requests time out after 30 s."
+  },
+  {
+   "feature": "PHP sessions ($_SESSION)",
+   "status": "works",
+   "note": "Kept in your database (table <prefix>hostlesswp_sessions, created on first use), so they survive across Worker instances."
+  },
+  {
+   "feature": "Raw sockets (fsockopen, stream_socket_client)",
+   "status": "works",
+   "note": "Real TCP connections from the Worker, TLS included. Port 25 and Cloudflare IP addresses are not reachable from Workers."
+  },
+  {
+   "feature": "AVIF image uploads",
+   "status": "works",
+   "note": "The sizes WordPress makes from them are saved as WebP: GD decodes AVIF but cannot encode it. Works up to 2560x1920."
+  },
+  {
+   "feature": "Very large image uploads",
    "status": "no",
-   "note": "Use a mail plugin that sends through an HTTP API (not yet tested)."
+   "note": "GD holds the whole image in memory: JPEG works at 3000x2000 and fails at 4000x3000. Resize photos before uploading."
   },
   {
    "feature": "Installing or updating plugins and themes from the admin",

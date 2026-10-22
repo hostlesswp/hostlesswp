@@ -9,7 +9,7 @@ add_filter( 'got_url_rewrite', '__return_true' );
 add_filter( 'got_rewrite', '__return_true' );
 
 /*
- * php-wasm has no network stack: sockets degrade into a busy-polling WebSocket shim.
+ * HostlessWP PHP has no network stack: sockets degrade into a busy-polling WebSocket shim.
  * Route every WP HTTP API call through the Worker's fetch(); loopback requests fail
  * fast because the single PHP instance is busy serving the caller.
  */
@@ -70,6 +70,36 @@ add_filter(
 	},
 	1,
 	3
+);
+
+/*
+ * Mail: mail() hands each message to the Worker, which sends it over SMTP (runtime/src/mail.js). PHPMailer's own
+ * SMTP client needs sockets PHP does not have here, so when an SMTP plugin (WP Mail SMTP and the like) set it up,
+ * its server settings go to the Worker and the message goes through mail(). Without such a plugin the Worker
+ * uses the SMTP_URL secret.
+ */
+add_action(
+	'phpmailer_init',
+	function ( $phpmailer ) {
+		if ( 'smtp' !== $phpmailer->Mailer ) {
+			return;
+		}
+		post_message_to_js(
+			wp_json_encode(
+				array(
+					'op'     => 'smtp-next',
+					'host'   => $phpmailer->Host,
+					'port'   => $phpmailer->Port,
+					'secure' => $phpmailer->SMTPSecure,
+					'auth'   => (bool) $phpmailer->SMTPAuth,
+					'user'   => $phpmailer->Username,
+					'pass'   => $phpmailer->Password,
+				)
+			)
+		);
+		$phpmailer->isMail();
+	},
+	PHP_INT_MAX
 );
 
 /*
@@ -301,13 +331,17 @@ const HOSTLESSWP_PRELOAD_PATHS  = 30;
 const HOSTLESSWP_PRELOAD_TOTAL  = 300;
 // Answering in the page starts the REST server there, which costs memory (with WooCommerce every admin page grew by a
 // full step and failed with "exceeded memory"). PHP memory grows in 20% steps; up to ~124 MB requests succeed, from
-// ~149 MB on they start failing, so preload only while the page has stayed at or below 104 MB.
+// ~149 MB on they start failing, so preload only while the page has stayed at or below 104 MB, and only if the
+// memory PHP already has leaves room for it: on the block editor preloading takes about 17 MB, and growing for it
+// adds a whole step (about 20 MB) that the isolate keeps.
 const HOSTLESSWP_PRELOAD_MAX_HEAP_MB = 104;
+const HOSTLESSWP_PRELOAD_ROOM_MB     = 24;
 
 // Whether the page may still start the REST server (see HOSTLESSWP_PRELOAD_MAX_HEAP_MB).
 function hostlesswp_heap_allows_rest() {
 	$heap = json_decode( (string) post_message_to_js( wp_json_encode( array( 'op' => 'heap' ) ) ), true );
-	return ! empty( $heap['mb'] ) && $heap['mb'] <= HOSTLESSWP_PRELOAD_MAX_HEAP_MB;
+	return ! empty( $heap['mb'] ) && $heap['mb'] <= HOSTLESSWP_PRELOAD_MAX_HEAP_MB
+		&& isset( $heap['usedMb'] ) && $heap['mb'] - $heap['usedMb'] >= HOSTLESSWP_PRELOAD_ROOM_MB;
 }
 
 // The block editor preloads its REST data in the page, which starts the REST server: past the limit the editor
@@ -582,4 +616,21 @@ add_action(
 		}
 	},
 	0
+);
+
+// AVIF: GD here decodes AVIF but cannot encode it (HostlessWP PHP has the AV1 decoder only). Images WordPress would
+// save as AVIF (the sizes of an AVIF upload, or another format a plugin converts to AVIF) are saved as WebP.
+add_filter(
+	'image_editor_output_format',
+	function ( $formats ) {
+		$formats = (array) $formats;
+		$formats['image/avif'] = $formats['image/avif'] ?? 'image/webp';
+		foreach ( $formats as $from => $to ) {
+			if ( 'image/avif' === $to ) {
+				$formats[ $from ] = 'image/webp';
+			}
+		}
+		return $formats;
+	},
+	PHP_INT_MAX
 );
