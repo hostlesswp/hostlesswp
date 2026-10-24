@@ -54,7 +54,7 @@ Your answers during setup (Cloudflare account, database access, region, media st
 Visitor ──► Cloudflare edge ──► static files (theme/plugin assets, wp-includes)
                      │
                      └──────► Worker next to your database
-                                HostlessWP PHP (PHP 8.3) + OPcache + precompiled scripts
+                                HostlessWP engine (PHP 8.3) + OPcache + precompiled scripts
                                 WordPress core, your theme and plugins in memory
                                        │
                                        └──► Hyperdrive ──► your MySQL (SSL or Tunnel)
@@ -64,15 +64,13 @@ Visitor ──► Cloudflare edge ──► static files (theme/plugin assets, w
 The runtime layer is small and lives in [`runtime/`](runtime):
 
 - **Database bridge.** A `db.php` drop-in sends every `wpdb` query to the Worker, which runs it through Hyperdrive. A userland `mysqli` covers plugins that use it directly. Hyperdrive can run consecutive statements on different server connections, so session state is carried per statement (`SET_VAR` hints), `SELECT @@var` is answered from `SHOW VARIABLES`, and `SQL_CALC_FOUND_ROWS` paging runs as a parallel `COUNT`.
-- **HTTP.** PHP has no network stack in a Worker, so outgoing requests go through the Worker's `fetch()`: `wp_remote_*` calls, a userland `curl_*` (including `curl_multi`, whose requests run in parallel) for plugins and SDKs that call curl directly, and `http://` / `https://` streams (`file_get_contents()` of a URL, `fopen()`, `copy()`, `getimagesize()`). DNS functions (`checkdnsrr()`, `getmxrr()`, `dns_get_record()`, `gethostbyname()`) ask Cloudflare's DNS over HTTPS.
+- **HTTP.** Outgoing requests go through the Worker's `fetch()`: `wp_remote_*` calls, a userland `curl_*` (including `curl_multi`, whose requests run in parallel) for plugins and SDKs that call curl directly, and `http://` / `https://` streams (`file_get_contents()` of a URL, `fopen()`, `copy()`, `getimagesize()`). DNS functions (`checkdnsrr()`, `getmxrr()`, `dns_get_record()`, `gethostbyname()`) ask Cloudflare's DNS over HTTPS.
 - **Sockets.** `fsockopen()`, `stream_socket_client()` and what is built on them (SMTP clients, Redis through Predis, other TCP protocols) open real TCP connections with Workers' `connect()`; TLS (`ssl://`, `stream_socket_enable_crypto()`) runs in PHP's OpenSSL and checks certificates against WordPress's CA bundle. Workers do not allow port 25 or Cloudflare's own IP addresses.
 - **Sessions.** PHP sessions (`$_SESSION`) are kept in your database, table `<prefix>hostlesswp_sessions`, created on the first write: a Worker instance has only memory for files, and a site runs on several instances.
 - **Email.** `mail()`, and with it `wp_mail()`, is sent over SMTP from the Worker (see [Email](#email)).
 - **Clock.** Workers freeze the clock during CPU work; PHP functions that wait for the clock to move (`uniqid()`) would spin, so the clock is made strictly monotonic.
-- **PHP.** HostlessWP PHP is PHP 8.3 compiled to WebAssembly, our own build of [php-wasm](https://github.com/WordPress/wordpress-playground) from WordPress Playground ([`runtime/hostlesswp-php`](runtime/hostlesswp-php/README.md)).
-- **OPcache.** php-wasm's OPcache does not start by default (its SAPI is not on OPcache's whitelist); HostlessWP PHP patches that, uses shared memory, and mounts precompiled scripts. The mounted file cache is read-only at runtime: scripts compiled on the Worker would otherwise be written to memory as well.
-- **Files on first read.** A Worker instance starts with the files PHP reads as data (and the compiled scripts of the pages precompile visited); PHP sources and the rest of the compiled scripts are listed but fetched in small parts only when PHP first reads one, so what an instance holds in memory follows what its requests use, not the size of your plugins. Compiled scripts are released once PHP has loaded them.
-- **Function bodies on first call.** A WordPress request loads every function of every file it includes, but runs only about a fifth of them. In HostlessWP PHP, OPcache keeps the compiled body of each larger function in a separate compressed file and loads it the first time the function is called. On the WooCommerce demo this lowered PHP's memory by 15 to 20 MB per request.
+- **PHP.** The HostlessWP engine is PHP 8.3 compiled to WebAssembly and tuned for the Workers memory limit ([`runtime/engine`](runtime/engine/README.md)). OPcache is on, with scripts precompiled at deploy.
+- **Files on first read.** A Worker instance starts with the files PHP reads as data; PHP sources and compiled scripts are fetched in small parts only when PHP first reads one, so what an instance holds in memory follows what its requests use, not the size of your plugins.
 - **WP-Cron** runs from a Cloudflare Cron Trigger every 15 minutes instead of during page views.
 - **Media.** `wp-content/uploads` lives in your S3-compatible bucket. PHP writes uploads to memory as usual; after each request the Worker copies new files to the bucket. Unique file names are checked against the bucket, originals are fetched when you edit an image, and deleting an attachment deletes its files. Media URLs stay `/wp-content/uploads/...` and are served from the bucket (cached at the edge) without starting PHP; set a public or CDN address for the bucket to serve new media from there instead.
 
@@ -153,7 +151,7 @@ Not supported yet:
 - Theme and plugin files larger than 25 MiB are left out of static assets (Workers limit). Media files under 2 GB are copied to your bucket.
 - **Uploads over 32 MB** by default (`s3.maxUploadMb` in `hostlesswp-config.php`; the Worker request size limit still applies).
 - **Plugins that cache generated files in `wp-content/uploads`** (Elementor CSS, for example) work, but rebuild those files on every request.
-- **Imagick** is not available; images are processed with GD. **AVIF** uploads work, but the sizes WordPress makes from them are saved as WebP (GD here decodes AVIF and cannot encode it).
+- **Imagick** is not available; images are processed with GD. **AVIF** uploads work, but the sizes WordPress makes from them are saved as WebP (GD here cannot encode AVIF).
 - **Very large images.** GD holds the whole image in memory while WordPress makes the sizes, so a large photo can run out of memory and the upload fails. Measured: JPEG works at 3000x2000 and fails at 4000x3000; AVIF works at 2560x1920 and fails at 3000x2000. Resize before uploading.
 - After `file_get_contents()` of a URL, `$http_response_header` is not set; `stream_get_meta_data()` of an opened URL has the headers.
 - **Thumbnail regeneration plugins** that read originals from disk do not see them (they are in the bucket); editing images in the media library works.
@@ -186,7 +184,7 @@ bin/hostlesswp.mjs        CLI entry
 lib/                   wizard steps, build, Cloudflare (via Wrangler), precompile
 runtime/src/           the Worker (index.js) and lazy zip file system
 runtime/php/           wp-config template, db.php drop-in, mysqli polyfill, runtime mu-plugin
-runtime/hostlesswp-php/  HostlessWP PHP, the PHP 8.3 WebAssembly build the Worker runs
+runtime/engine/         the HostlessWP engine: PHP 8.3 in WebAssembly and its JS runtime
 data/compat.json       tested plugins and features (used by the CLI and the website)
 demo/                  the public demo: source site setup, demo rules, reset Worker
 test/                  unit tests (`npm test`)
@@ -198,7 +196,7 @@ Adding a plugin to the compatibility list: deploy a site with only that plugin a
 
 ## Credits
 
-- [WordPress Playground](https://github.com/WordPress/wordpress-playground) for php-wasm (`@php-wasm/*`), which makes PHP in WebAssembly possible and which HostlessWP PHP is built from
+- [PHP](https://www.php.net/): this product includes PHP software, freely available from <http://www.php.net/software/>
 - [Cloudflare Workers](https://developers.cloudflare.com/workers/), [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) and [Wrangler](https://developers.cloudflare.com/workers/wrangler/)
 
 HostlessWP is an independent project and is not affiliated with Cloudflare, Automattic or WordPress.org.

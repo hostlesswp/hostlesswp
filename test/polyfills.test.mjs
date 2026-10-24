@@ -8,7 +8,7 @@ import { buildSite } from '../lib/build.mjs';
 import { PKG_ROOT } from '../lib/run.mjs';
 import { parseMessage, addressesOf, parseSmtpUrl, smtpFromPhpMailer } from '../runtime/src/mail.js';
 
-// Runs PHP code (the real HostlessWP PHP build) with the curl, URL stream and fileinfo polyfills loaded, an HTTP
+// Runs PHP code (the real engine build) with the curl, URL stream, fileinfo, DNS, session and mail polyfills loaded, an HTTP
 // server on [::1] (not refused as loopback) and a fake SMTP server behind mail(). Returns what the code printed
 // as JSON and what the SMTP server received.
 function runPhp(code) {
@@ -28,12 +28,11 @@ import net from 'node:net';
 import zlib from 'node:zlib';
 import { Duplex } from 'node:stream';
 import { createRequire } from 'node:module';
-import { loadPHPRuntime, PHP, setPhpIniEntries } from '@php-wasm/universal';
-import * as phpLoader from './src/vendor/php.js';
-import phpWasm from './src/vendor/php.wasm';
+import createCore from './src/vendor/core.mjs';
+import coreWasm from './src/vendor/core.wasm';
+import { loadEngine } from './src/vendor/engine.mjs';
 import { fetchOne } from './src/http.js';
-import { sendmailHandler } from './src/mail.js';
-import { tcpWebSocket } from './src/sockets.js';
+import { mailBridge } from './src/mail.js';
 import { sessionBridge } from './src/session.js';
 import { fakeSessionDb } from '${PKG_ROOT}/test/helpers/fake-session-db.mjs';
 const sessionDb = fakeSessionDb();
@@ -118,11 +117,8 @@ await new Promise((r) => closed.listen(0, '127.0.0.1', r));
 const closedPort = closed.address().port;
 await new Promise((r) => closed.close(r));
 
-const id = await loadPHPRuntime(phpLoader, { websocket: { decorator: () => tcpWebSocket(connect) }, instantiateWasm(imports, done) { WebAssembly.instantiate(phpWasm, imports).then((i) => done(i, phpWasm)); return {}; } });
-const php = new PHP(id);
 let smtpOn = true;
-php.setCommandSpawnHandler('sendmail', sendmailHandler({ getSmtp: () => (smtpOn ? { host: '127.0.0.1', port: smtpServer.address().port, secure: 'none' } : null), helo: () => 'test.local', connect }));
-await setPhpIniEntries(php, { sendmail_path: '/usr/sbin/sendmail -t -i', display_errors: '1', error_reporting: 'E_ALL', disable_functions: 'gethostbyname,gethostbynamel,gethostbyaddr,checkdnsrr,dns_check_record,getmxrr,dns_get_mx,dns_get_record' });
+const sendMail = mailBridge({ getSmtp: () => (smtpOn ? { host: '127.0.0.1', port: smtpServer.address().port, secure: 'none' } : null), helo: () => 'test.local', connect });
 // DNS-over-HTTPS answers for hostlesswp-dns.php.
 const zone = {
   'gmail.com|MX': [[15, 300, '5 gmail-smtp-in.l.google.com.'], [15, 300, '10 alt1.gmail-smtp-in.l.google.com.']],
@@ -138,19 +134,23 @@ const doh = (url) => {
   const body = JSON.stringify(answers ? { Status: 0, Answer: answers.map(([type, TTL, data]) => ({ name: u.searchParams.get('name'), type, TTL, data })) } : { Status: 3 });
   return { status: 200, reason: 'OK', url, headers: [['content-type', 'application/dns-json']], body: btoa(body) };
 };
-php.onMessage(async (data) => {
+const onMessage = async (data) => {
   const msg = JSON.parse(data);
+  if (msg.op === 'mail') return sendMail(msg);
   if (msg.op === 'fetch') return JSON.stringify(await Promise.all(msg.requests.map((q) => (q.url.startsWith('https://cloudflare-dns.com/') ? doh(q.url) : fetchOne(q)))));
   if (msg.op === 'smtp-off') smtpOn = false;
   if (msg.op === 'session') return JSON.stringify(await sessionBridge(sessionDb.query, msg));
   if (msg.op === 'session-reads') return String(sessionDb.sql.filter((q) => q.startsWith('SELECT')).length);
   return '{}';
-});
-php.mkdir('/app');
-for (const f of ['hostlesswp-http.php', 'hostlesswp-curl.php', 'hostlesswp-fileinfo.php', 'hostlesswp-dns.php', 'hostlesswp-session.php']) php.writeFile('/app/' + f, fs.readFileSync('${PKG_ROOT}/runtime/php/' + f));
-const prelude = "<?php require '/app/hostlesswp-http.php'; require '/app/hostlesswp-curl.php'; require '/app/hostlesswp-fileinfo.php'; require '/app/hostlesswp-dns.php'; require '/app/hostlesswp-session.php'; $base = 'http://[::1]:" + server.address().port + "'; $tcpPort = " + tcpServer.address().port + "; $closedPort = " + closedPort + "; ?>";
-const r = await php.run({ code: prelude + fs.readFileSync('code.php', 'utf8') });
-process.stdout.write(JSON.stringify({ out: r.text, errors: r.errors, smtp }));
+};
+const engine = await loadEngine(createCore, coreWasm, { env: { USE_ZEND_ALLOC: '0' }, connect, onMessage });
+engine.FS.mkdirTree('/app');
+engine.FS.mkdirTree('/tmp');
+await engine.start({ display_errors: '1', error_reporting: 'E_ALL', disable_functions: 'gethostbyname,gethostbynamel,gethostbyaddr,checkdnsrr,dns_check_record,getmxrr,dns_get_mx,dns_get_record,mail' });
+for (const f of ['hostlesswp-http.php', 'hostlesswp-curl.php', 'hostlesswp-fileinfo.php', 'hostlesswp-dns.php', 'hostlesswp-session.php', 'hostlesswp-mail.php', 'hostlesswp-mysqli.php']) engine.FS.writeFile('/app/' + f, fs.readFileSync('${PKG_ROOT}/runtime/php/' + f));
+const prelude = "<?php require '/app/hostlesswp-http.php'; require '/app/hostlesswp-curl.php'; require '/app/hostlesswp-fileinfo.php'; require '/app/hostlesswp-dns.php'; require '/app/hostlesswp-session.php'; require '/app/hostlesswp-mail.php'; $base = 'http://[::1]:" + server.address().port + "'; $tcpPort = " + tcpServer.address().port + "; $closedPort = " + closedPort + "; ?>";
+const r = await engine.run(prelude + fs.readFileSync('code.php', 'utf8'));
+process.stdout.write(JSON.stringify({ out: r.text, errors: r.log.join('\\n'), smtp }));
 process.exit(0);
 `,
   );
@@ -314,6 +314,17 @@ echo json_encode(array('ok' => $ok, 'off' => $off));
   assert.doesNotMatch(smtp.data, /hidden@q\.com/);
   // The dot-stuffed line arrives as "..dot line" on the wire.
   assert.match(smtp.data, /^\.\.dot line$/m);
+});
+
+test('binary values in SQL reach the bridge as hex literals', () => {
+  const { result: r } = runPhp(`<?php
+require '/app/hostlesswp-mysqli.php';
+$bin = hash('sha256', 'ua', true) . "'\\\\\\0";
+$sql = "SELECT 1 FROM t WHERE id = '" . hostlesswp_escape($bin) . "' AND name = 'it\\'s' AND x = X'00ff'";
+$out = hostlesswp_sql_for_bridge($sql);
+echo json_encode(array('utf8' => (bool) preg_match('//u', $out), 'hex' => strpos($out, "X'" . bin2hex($bin) . "'") !== false, 'rest' => strpos($out, "name = 'it\\'s' AND x = X'00ff'") !== false, 'plain' => hostlesswp_sql_for_bridge("SELECT 'h\u{e9}llo'") === "SELECT 'h\u{e9}llo'"));
+`);
+  assert.deepEqual(r, { utf8: true, hex: true, rest: true, plain: true });
 });
 
 test('DNS functions answer over DNS-over-HTTPS', () => {

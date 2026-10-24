@@ -1,10 +1,36 @@
 <?php
 /**
- * DNS lookups over DNS-over-HTTPS (Cloudflare's resolver, through the Worker's fetch()). PHP.wasm answers every
- * name with a placeholder address and every record query with nothing, which makes email validators reject
- * every address and private-address checks reject every host. The runtime disables the built-in functions
- * (runtime/src/index.js, disable_functions), so PHP lets these take their names.
+ * DNS lookups over DNS-over-HTTPS (Cloudflare's resolver, through the Worker's fetch()). A Worker has no resolver:
+ * PHP's own functions would answer every name with a placeholder address and have no record queries, which makes
+ * email validators reject every address and private-address checks reject every host. The runtime disables the
+ * built-in functions (runtime/src/index.js, disable_functions), so PHP lets these take their names.
  */
+
+// PHP defines the DNS_* constants only where it has a resolver library; values as in PHP's php_dns.h.
+foreach (
+	array(
+		'DNS_A'     => 0x00000001,
+		'DNS_NS'    => 0x00000002,
+		'DNS_CNAME' => 0x00000010,
+		'DNS_SOA'   => 0x00000020,
+		'DNS_PTR'   => 0x00000800,
+		'DNS_HINFO' => 0x00001000,
+		'DNS_CAA'   => 0x00002000,
+		'DNS_MX'    => 0x00004000,
+		'DNS_TXT'   => 0x00008000,
+		'DNS_A6'    => 0x01000000,
+		'DNS_SRV'   => 0x02000000,
+		'DNS_NAPTR' => 0x04000000,
+		'DNS_AAAA'  => 0x08000000,
+		'DNS_ANY'   => 0x10000000,
+		'DNS_ALL'   => 0x0F00F833,
+	) as $hostlesswp_dns_name => $hostlesswp_dns_value
+) {
+	if ( ! defined( $hostlesswp_dns_name ) ) {
+		define( $hostlesswp_dns_name, $hostlesswp_dns_value );
+	}
+}
+unset( $hostlesswp_dns_name, $hostlesswp_dns_value );
 
 // Answers for one or more [name, type] queries, in order; each is a list of [type, ttl, data], or null on failure.
 function hostlesswp_dns_query( array $queries ) {

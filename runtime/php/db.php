@@ -15,8 +15,8 @@ class Worker_Bridge_DB extends wpdb {
 	private $bridge_fields = array();
 
 	private function bridge( $op, $sql = '' ) {
-		$raw = post_message_to_js( json_encode( array( 'op' => $op, 'sql' => $sql ) ) );
-		$res = json_decode( $raw, true );
+		$raw = post_message_to_js( json_encode( array( 'op' => $op, 'sql' => hostlesswp_sql_for_bridge( $sql ) ), JSON_INVALID_UTF8_SUBSTITUTE ) );
+		$res = json_decode( (string) $raw, true );
 		if ( ! is_array( $res ) ) {
 			return array( 'error' => 'bridge: invalid response', 'errno' => 2006 );
 		}

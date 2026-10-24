@@ -1,6 +1,6 @@
 <?php
 /**
- * Userland curl: HostlessWP PHP has no curl extension (it would have no network to use). curl_*() send their
+ * Userland curl: the engine has no curl extension. curl_*() send their
  * requests with the Worker's fetch() through hostlesswp_fetch() (hostlesswp-http.php), so plugins and SDKs that
  * call curl directly work.
  *

@@ -1,6 +1,6 @@
 <?php
 /**
- * Userland fileinfo: HostlessWP PHP leaves out the fileinfo extension (its magic database alone is megabytes of
+ * Userland fileinfo: the engine leaves out the fileinfo extension (its magic database alone is megabytes of
  * memory). finfo, finfo_*() and mime_content_type() recognise the formats a WordPress site handles from their
  * first bytes: images, documents, archives, audio, video, fonts and text. Anything else is
  * application/octet-stream. Loaded by wp-config.php only when the extension is missing.

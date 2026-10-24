@@ -14,17 +14,22 @@ function hostlesswp_env( $key ) {
 	return isset( $env[ $key ] ) ? (string) $env[ $key ] : false;
 }
 
-// HostlessWP PHP has no network stack and leaves out some extensions: HTTP from curl and from URL streams and
-// DNS lookups go through the Worker's fetch(), and fileinfo is matched in PHP.
+// The engine leaves out some extensions and cannot start processes: HTTP from curl and from URL streams and DNS
+// lookups go through the Worker's fetch(), fileinfo is matched in PHP and mail() hands messages to the Worker.
 require_once __DIR__ . '/wp-content/hostlesswp-http.php';
 if ( ! function_exists( 'checkdnsrr' ) ) {
 	require_once __DIR__ . '/wp-content/hostlesswp-dns.php';
 }
-if ( ! extension_loaded( 'curl' ) ) {
+// The engine reports curl and fileinfo as loaded (runtime/src/index.js) because these files provide them, so the
+// check is for their functions.
+if ( ! function_exists( 'curl_init' ) ) {
 	require_once __DIR__ . '/wp-content/hostlesswp-curl.php';
 }
-if ( ! extension_loaded( 'fileinfo' ) ) {
+if ( ! function_exists( 'finfo_open' ) ) {
 	require_once __DIR__ . '/wp-content/hostlesswp-fileinfo.php';
+}
+if ( ! function_exists( 'mail' ) ) {
+	require_once __DIR__ . '/wp-content/hostlesswp-mail.php';
 }
 // GD decodes AVIF but has no encoder: the built-in imageavif() is disabled (runtime/src/index.js) because it reports
 // success after writing an empty file. It must exist for WordPress to accept AVIF uploads, whose sizes are saved as

@@ -9,9 +9,9 @@ add_filter( 'got_url_rewrite', '__return_true' );
 add_filter( 'got_rewrite', '__return_true' );
 
 /*
- * HostlessWP PHP has no network stack: sockets degrade into a busy-polling WebSocket shim.
- * Route every WP HTTP API call through the Worker's fetch(); loopback requests fail
- * fast because the single PHP instance is busy serving the caller.
+ * PHP's sockets are plain TCP here (Workers' connect()), with TLS done in PHP; HTTP is faster through the Worker's
+ * fetch(). Route every WP HTTP API call there; loopback requests fail fast because the single PHP instance is busy
+ * serving the caller.
  */
 add_filter(
 	'pre_http_request',
@@ -618,7 +618,7 @@ add_action(
 	0
 );
 
-// AVIF: GD here decodes AVIF but cannot encode it (HostlessWP PHP has the AV1 decoder only). Images WordPress would
+// AVIF: GD here decodes AVIF but cannot encode it (the engine has the AV1 decoder only). Images WordPress would
 // save as AVIF (the sizes of an AVIF upload, or another format a plugin converts to AVIF) are saved as WebP.
 add_filter(
 	'image_editor_output_format',

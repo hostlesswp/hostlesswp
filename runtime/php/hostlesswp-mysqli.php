@@ -1,9 +1,58 @@
 <?php
 /**
- * Userland mysqli: HostlessWP PHP has no mysqli extension.
+ * Userland mysqli: the engine has no mysqli extension.
  * Every query goes through the same Worker bridge as wpdb, so plugins that
  * call mysqli_* on $wpdb->dbh (backup/security plugins) keep working.
  */
+
+/*
+ * SQL for the Worker bridge, which carries queries as JSON text. String literals that are not valid UTF-8 (binary
+ * values: raw hashes, packed IP addresses) cannot travel that way; they become hex literals, which MySQL reads as the
+ * same bytes. Literals are as hostlesswp_escape() and wpdb write them: quoted, with backslash escapes.
+ */
+function hostlesswp_sql_for_bridge( $sql ) {
+	$sql = (string) $sql;
+	if ( preg_match( '//u', $sql ) ) {
+		return $sql;
+	}
+	$unescape = array( '0' => "\0", 'b' => "\x08", 'n' => "\n", 'r' => "\r", 't' => "\t", 'Z' => "\x1a" );
+	$out      = '';
+	$len      = strlen( $sql );
+	$i        = 0;
+	while ( $i < $len ) {
+		$plain = strcspn( $sql, "'\"", $i );
+		$out  .= substr( $sql, $i, $plain );
+		$i    += $plain;
+		if ( $i >= $len ) {
+			break;
+		}
+		$quote = $sql[ $i ];
+		$value = '';
+		$j     = $i + 1;
+		while ( $j < $len ) {
+			$c = $sql[ $j ];
+			if ( '\\' === $c && $j + 1 < $len ) {
+				$e      = $sql[ $j + 1 ];
+				$value .= isset( $unescape[ $e ] ) ? $unescape[ $e ] : ( '%' === $e || '_' === $e ? '\\' . $e : $e );
+				$j     += 2;
+				continue;
+			}
+			if ( $c === $quote ) {
+				if ( $j + 1 < $len && $sql[ $j + 1 ] === $quote ) {
+					$value .= $quote;
+					$j     += 2;
+					continue;
+				}
+				break;
+			}
+			$value .= $c;
+			++$j;
+		}
+		$out .= preg_match( '//u', $value ) ? substr( $sql, $i, $j + 1 - $i ) : "X'" . bin2hex( $value ) . "'";
+		$i    = $j + 1;
+	}
+	return $out;
+}
 
 // Top-level classes are bound at compile time, so class_exists('mysqli') is already true here;
 // only the real extension means the polyfill must step aside.
@@ -25,8 +74,8 @@ foreach ( array(
 unset( $hostlesswp_name, $hostlesswp_value );
 
 function hostlesswp_bridge( $op, $sql = '' ) {
-	$raw = post_message_to_js( json_encode( array( 'op' => $op, 'sql' => $sql ) ) );
-	$res = json_decode( $raw, true );
+	$raw = post_message_to_js( json_encode( array( 'op' => $op, 'sql' => hostlesswp_sql_for_bridge( $sql ) ), JSON_INVALID_UTF8_SUBSTITUTE ) );
+	$res = json_decode( (string) $raw, true );
 	return is_array( $res ) ? $res : array( 'error' => 'bridge: invalid response', 'errno' => 2006 );
 }
 

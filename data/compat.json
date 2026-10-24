@@ -1,12 +1,12 @@
 {
- "generated": "2026-10-14",
+ "generated": "2026-10-24",
  "environment": {
   "wordpress": "7.1.3",
-  "php": "8.3 (php-wasm 3.1.57)",
+  "php": "8.3 (HostlessWP engine)",
   "database": "MySQL 8.0 through Cloudflare Hyperdrive",
-  "testedBetween": "2026-10-12 and 2026-10-14"
+  "testedBetween": "2026-10-24"
  },
- "method": "Each plugin was deployed on its own, activated from the admin, then the front page, the dashboard and the admin pages the plugin adds were opened. Five plugins also had their main business flow tested. A plugin counts as working when every one of these pages loads without a PHP fatal error or a platform limit.",
+ "method": "Each plugin was built and precompiled with hostlesswp on its own, activated from the admin, then the front page, the dashboard and the admin pages the plugin adds (up to four) were opened. 17 ran on Cloudflare Workers, 13 ran the same build in Node.js against the same database. Six plugins also had their main business flow tested, email end to end through a test SMTP mailbox. A plugin counts as working when every one of these pages loads without a PHP fatal error or a platform limit.",
  "source": "Plugins: the top 30 by active installs from the WordPress.org plugins API on 2026-10-12.",
  "plugins": [
   {
@@ -52,7 +52,7 @@
    "name": "Contact Form 7",
    "version": "6.2.2",
    "activeInstalls": 10000000,
-   "status": "works-with-limits",
+   "status": "works",
    "checks": {
     "activate": true,
     "frontPage": true,
@@ -60,10 +60,10 @@
     "pluginPages": 4
    },
    "flow": {
-    "result": "6/7",
-    "what": "Form list, form page, submission accepted; no email was sent in the test (it ran before outgoing email was supported)"
+    "result": "7/7",
+    "what": "Form list, form on a page, submission accepted, notification email sent and received (test SMTP mailbox), form editor"
    },
-   "note": "Email notifications go out through the SMTP server set up for the site (not tested end to end yet).",
+   "note": null,
    "wpOrgUrl": "https://wordpress.org/plugins/contact-form-7/"
   },
   {
@@ -112,7 +112,7 @@
    },
    "flow": {
     "result": "14/14",
-    "what": "Store checkout end to end (cash on delivery): product created over REST, cart, checkout, order stored as processing, stock reduced, admin order list and status pages"
+    "what": "Store checkout end to end (cash on delivery): product created over REST, product and shop pages, cart, checkout, order stored as processing with its total, stock reduced, admin order list, order and status pages"
    },
    "note": null,
    "wpOrgUrl": "https://wordpress.org/plugins/woocommerce/"
@@ -209,8 +209,11 @@
     "dashboard": true,
     "pluginPages": 4
    },
-   "flow": null,
-   "note": "Admin pages load. Actually sending mail through a provider was not tested.",
+   "flow": {
+    "result": "3/3",
+    "what": "Settings page shows the SMTP mailer, password reset email sent through it and received (test SMTP mailbox)"
+   },
+   "note": "Admin pages load. Mail goes out through the SMTP server set in the plugin.",
    "wpOrgUrl": "https://wordpress.org/plugins/wp-mail-smtp/"
   },
   {
@@ -399,10 +402,10 @@
    "activeInstalls": 2000000,
    "status": "works-with-limits",
    "checks": {
-    "activate": false,
+    "activate": true,
     "frontPage": true,
     "dashboard": true,
-    "pluginPages": 3
+    "pluginPages": 4
    },
    "flow": null,
    "note": "Onboarding redirects to connect.monsterinsights.com with empty parameters and gets HTTP 400; cause not verified.",
@@ -539,7 +542,7 @@
   {
    "feature": "Outgoing email (wp_mail, PHP mail())",
    "status": "works",
-   "note": "Sent over SMTP from the Worker: through your SMTP plugin's server (WP Mail SMTP and the like), or the one you enter during setup. Ports 465 and 587; Workers block port 25."
+   "note": "Sent over SMTP from the Worker: through your SMTP plugin's server (WP Mail SMTP and the like), or the one you enter during setup. Ports 465 and 587; Workers block port 25. Checked end to end with Contact Form 7 notifications and WP Mail SMTP."
   },
   {
    "feature": "HTTP from plugins (curl, file_get_contents of URLs)",

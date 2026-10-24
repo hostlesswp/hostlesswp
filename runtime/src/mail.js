@@ -1,7 +1,7 @@
-// mail() for PHP: PHP pipes each message to `sendmail -t -i`; this handler takes the process's place and delivers the
-// message over SMTP with Workers TCP sockets. The server comes from the site's own SMTP plugin settings when one
-// configured PHPMailer for SMTP (runtime/php/hostlesswp-runtime.php), otherwise from the SMTP_URL secret.
-import { createSpawnHandler } from '@php-wasm/util';
+// mail() for PHP: runtime/php/hostlesswp-mail.php hands each message, as PHP would pipe it to `sendmail -t -i`, to
+// the Worker, which delivers it over SMTP with Workers TCP sockets. The server comes from the site's own SMTP plugin
+// settings when one configured PHPMailer for SMTP (runtime/php/hostlesswp-runtime.php), otherwise from the SMTP_URL
+// secret.
 
 const latin1 = (bytes) => {
   let s = '';
@@ -205,34 +205,23 @@ async function workersConnect() {
   return connect;
 }
 
-// getSmtp() returns the server for this message (or null); connect defaults to Workers sockets.
-export function sendmailHandler({ getSmtp, helo, connect }) {
-  return createSpawnHandler(async (argv, proc) => {
-    const chunks = [];
-    proc.on('stdin', (chunk) => chunks.push(chunk.slice()));
-    const stdin = proc.childProcess.stdin;
-    if (!stdin.ended) await new Promise((resolve) => stdin.once('finish', resolve));
+// The bridge op 'mail' ({ raw: base64 message, params: mail()'s additional_params }); getSmtp() returns the server
+// for this message (or null), connect defaults to Workers sockets.
+export function mailBridge({ getSmtp, helo, connect }) {
+  return async (msg) => {
     try {
-      const all = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
-      let at = 0;
-      for (const c of chunks) {
-        all.set(new Uint8Array(c.buffer || c, c.byteOffset || 0, c.byteLength), at);
-        at += c.byteLength;
-      }
-      const msg = parseMessage(latin1(all));
+      const parsed = parseMessage(latin1(Uint8Array.from(atob(msg.raw || ''), (c) => c.charCodeAt(0))));
       // -f sets the envelope sender, as with sendmail.
+      const argv = String(msg.params || '').trim().split(/\s+/).filter(Boolean);
       const fi = argv.findIndex((a) => a.startsWith('-f'));
-      if (fi >= 0) msg.from = argv[fi].length > 2 ? argv[fi].slice(2) : argv[fi + 1] || msg.from;
+      if (fi >= 0) parsed.from = argv[fi].length > 2 ? argv[fi].slice(2) : argv[fi + 1] || parsed.from;
       const smtp = getSmtp();
       if (!smtp) throw new Error('no SMTP server: set the SMTP_URL secret (smtps://user:password@smtp.example.com:465) or configure an SMTP plugin');
-      await smtpSend(connect || (await workersConnect()), smtp, { ...msg, helo: helo() });
-      await new Promise((r) => setTimeout(r, 1));
-      proc.exit(0);
+      await smtpSend(connect || (await workersConnect()), smtp, { ...parsed, helo: helo() });
+      return JSON.stringify({ ok: true });
     } catch (e) {
       console.error('mail failed:', e.message || e);
-      proc.stderr('sendmail: ' + (e.message || e) + '\n');
-      await new Promise((r) => setTimeout(r, 1));
-      proc.exit(1);
+      return JSON.stringify({ ok: false, error: String(e.message || e) });
     }
-  });
+  };
 }

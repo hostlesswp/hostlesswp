@@ -1,8 +1,9 @@
 <?php
 /**
- * HTTP for code that does not go through the WordPress HTTP API. HostlessWP PHP has no network stack, so the
- * curl polyfill (hostlesswp-curl.php) and the http:// and https:// stream wrappers below (file_get_contents() or
- * fopen() of a URL, copy(), simplexml_load_file()) send their requests with the Worker's fetch().
+ * HTTP for code that does not go through the WordPress HTTP API. PHP's own HTTP would run over plain TCP sockets
+ * with TLS in PHP, so the curl polyfill (hostlesswp-curl.php) and the http:// and https:// stream wrappers below
+ * (file_get_contents() or fopen() of a URL, copy(), simplexml_load_file()) send their requests with the Worker's
+ * fetch() instead.
  */
 
 /**

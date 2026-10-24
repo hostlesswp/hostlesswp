@@ -28,21 +28,21 @@ function runPhp(code) {
     path.join(out, 'run.mjs'),
     `import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { loadPHPRuntime, PHP, __private__dont__use } from '@php-wasm/universal';
-import * as phpLoader from './src/vendor/php.js';
-import phpWasm from './src/vendor/php.wasm';
+import createCore from './src/vendor/core.mjs';
+import coreWasm from './src/vendor/core.wasm';
+import { loadEngine } from './src/vendor/engine.mjs';
 import { mountLazyZip, lazyStats } from './src/lazyfs.js';
-// The Emscripten loader expects a CommonJS require when it detects Node.
 globalThis.require = createRequire(import.meta.url);
-const id = await loadPHPRuntime(phpLoader, { instantiateWasm(imports, done) { WebAssembly.instantiate(phpWasm, imports).then((i) => done(i, phpWasm)); return {}; } });
-const php = new PHP(id);
-const FS = php[__private__dont__use].FS;
+const engine = await loadEngine(createCore, coreWasm, { env: { USE_ZEND_ALLOC: '0' } });
+const FS = engine.FS;
+FS.mkdirTree('/tmp');
+await engine.start({ display_errors: '1' });
 mountLazyZip(FS, '/srv', new Uint8Array(fs.readFileSync('a.zip')));
 mountLazyZip(FS, '/srv', new Uint8Array(fs.readFileSync('b.zip')));
 mountLazyZip(FS, '/ro', new Uint8Array(fs.readFileSync('a.zip')), { retain: false, readOnly: true });
 const before = lazyStats.nodes;
-const r = await php.run({ code: fs.readFileSync('code.php', 'utf8') });
-process.stdout.write(JSON.stringify({ before, out: r.text, errors: r.errors }));
+const r = await engine.run(fs.readFileSync('code.php', 'utf8'));
+process.stdout.write(JSON.stringify({ before, out: r.text, errors: r.log.join('\\n') }));
 process.exit(0);
 `,
   );
